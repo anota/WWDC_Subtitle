@@ -6,23 +6,96 @@ var async = require('async');
 var request = require('request');
 var fx = require('fs-extra');
 var fs = require('fs');
+var cheerio = require('cheerio');
+var argv = require('minimist')(process.argv.slice(2));
 var sutil = require('./subtitle_util');
 
 var videoLinksFile = "WWDC2015_links.txt";
-var subtitlesFolderForHD = "subtitles/HD/";
-var subtitlesFolderForSD = "subtitles/SD/";
+var lang = argv.lang ? argv.lang : 'zho';
+var subtitlesFolderForHD = "subtitles/HD/"+lang+"/";
+var subtitlesFolderForSD = "subtitles/SD/"+lang+"/";
 
-var videoURLRegex = /(http:\/\/devstreaming.apple.com\/videos\/wwdc\/2015\/\w+\/\d+\/)(\w+)\.mp4\?dl=1/;
+var videoURLRegex = /(http:\/\/devstreaming.apple.com\/videos\/wwdc\/\d+\/\w+\/\d+\/)(\w+)\.mp4\?dl=1/;
 async.waterfall([
     //read links file
     function(callback) {
-        fs.readFile(videoLinksFile, 'utf-8', function (err, data) {
-            if (err) throw err;
-            var lines = data.split("\n");
-            var links = lines.filter(function (line) {
-                return line && line.length > 0;
-            });
+        if (argv.mp4) {
+            // exp: node main.js --mp4 http://devstreaming.apple.com/videos/wwdc/2015/713gc2tqvvb/713/713_hd_introducing_watch_connectivity.mp4?dl=1
+            console.log('======== Mp4:'+argv.mp4+' ======== ');
+            var links = [argv.mp4];
             callback(null, links);
+        } else if (argv.page) {
+            // exp: node main.js --page https://developer.apple.com/videos/play/wwdc2016/228/
+            console.log('======== Page:'+argv.page+' ======== ');
+            callback(null, {title: '', link: argv.page, isSectionLink: true});
+        } else if (argv.year) {
+            // exp: node main.js --year 2016
+            console.log('======== Year:'+argv.year+' ======== ');
+            callback(null, argv.year);
+        } else {
+            fs.readFile(videoLinksFile, 'utf-8', function (err, data) {
+                if (err) throw err;
+                var lines = data.split("\n");
+                var links = lines.filter(function (line) {
+                    return line && line.length > 0 && line.indexOf('.mp4') !== -1;;
+                });
+                callback(null, links);
+            });
+        }
+    },
+
+    // get full year list of video page url
+    function (year, callback) {
+        if (typeof year !== 'string' && typeof year !== 'number') return callback(null, year);
+        url = 'https://developer.apple.com/videos/wwdc'+year+'/';
+        var options = {
+          url: url,
+          headers: {
+            'User-Agent': 'request'
+          }
+        };
+        request(options, function (err, response, body) {
+            if (!err && response.statusCode === 200) {
+                var $ = cheerio.load(body);
+                console.log($('title').text());
+                var allGroups = $('ul.collection-focus-groups li.collection-focus-group');
+                allGroups.each(function (i, group) {
+                    var groupTitle = $('section.sticky', group).text().trim();
+                    var sections = $('ul.collection-items li.collection-item', group);
+                    console.log(groupTitle + ': x' + sections.length);
+                    sections.each(function (i, section) {
+                        var sectionTitle = $('h5', section).text();
+                        var link = 'https://developer.apple.com'+$('a', section).attr('href');
+                        console.log('---- '+sectionTitle);
+                        callback(null, {title: sectionTitle, link: link, isSectionLink:true});
+                    });
+                });
+            } else {
+                callback(err, response);
+            }
+        });
+    },
+
+    // get hd-video link , sd-video link and pdf document link from a video page
+    function (pageInfo, callback) {
+        if (!pageInfo.isSectionLink) return callback(null, pageInfo);
+        var options = {
+          url: pageInfo.link,
+          headers: {
+            'User-Agent': 'request'
+          }
+        };
+        request(options, function (err, response, body) {
+            if (!err && response.statusCode === 200) {
+                var $ = cheerio.load(body);
+                var videoLinks = $('li.video ul.options a');
+                var hdLink = videoLinks.first().attr('href');
+                var sdLink = videoLinks.last().attr('href');
+                var docLink = $('li.document a').first().attr('href');
+                callback(null, [hdLink]);
+            } else {
+                callback(err, response);
+            }
         });
     },
 
@@ -65,14 +138,14 @@ async.waterfall([
                 callback(null, videoInfo);
             } else {
                 console.log("start download subtitle index file of " + videoInfo.videoNameWithOutExtension);
-                var videoSubtitleIndexFileURL = videoInfo.videoURLPrefix + "subtitles/eng/prog_index.m3u8";
+                var videoSubtitleIndexFileURL = videoInfo.videoURLPrefix + "subtitles/"+lang+"/prog_index.m3u8";
                 request(videoSubtitleIndexFileURL, function (err, response, body) {
                     if (!err && response.statusCode === 200) {
                         var webvttFileNames = body.split("\n").filter(function(line, index) {
                             return line.indexOf("fileSequence") === 0;
                         });
                         webvttFileNames = webvttFileNames.map(function (fileName) {
-                            return videoInfo.videoURLPrefix + "subtitles/eng/"+ fileName;
+                            return videoInfo.videoURLPrefix + "subtitles/"+lang+"/"+ fileName;
                         });
                         videoInfo.webvttFileNames = webvttFileNames;
                     } else {
@@ -101,12 +174,12 @@ async.waterfall([
                                 webvttFilesLines = webvttFilesLines.concat(lines);
                                 callback(null, webvttFilesLines);
                             } else {
-                                videoInfo.errorMessage = errorMessage;
-                                callback(errorMessage, null);
+                                videoInfo.errorMessage = 'cannot download '+webvttFileURL;
+                                callback(videoInfo.errorMessage, null);
                             }
                         });
                     }, function (err, webvttFilesLines) {
-                        if (webvttFilesLines.length > 0) {
+                        if (webvttFilesLines && webvttFilesLines.length > 0) {
                             webvttFilesLines = webvttFilesLines.filter(function (line) {
                                 //remove webvtt file header, they're useless
                                 return line.indexOf("WEBVTT") !== 0 && line.indexOf("X-TIMESTAMP-MAP") !== 0;
@@ -129,6 +202,8 @@ async.waterfall([
                                     });
                                 }
                             });
+                        } else {
+                            console.log(err);
                         }
                     });
                 })(videoInfo);
