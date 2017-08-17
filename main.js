@@ -88,7 +88,7 @@ async.waterfall([
         request(options, function (err, response, body) {
             if (!err && response.statusCode === 200) {
                 var $ = cheerio.load(body);
-                var videoLinks = $('li.video ul.options a');
+                var videoLinks = $('li.download ul.options a');
                 var hdLink = videoLinks.first().attr('href');
                 var sdLink = videoLinks.last().attr('href');
                 var docLink = $('li.document a').first().attr('href');
