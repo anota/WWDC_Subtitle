@@ -15,7 +15,7 @@ var lang = argv.lang ? argv.lang : 'zho';
 var subtitlesFolderForHD = "subtitles/HD/"+lang+"/";
 var subtitlesFolderForSD = "subtitles/SD/"+lang+"/";
 
-var videoURLRegex = /(http:\/\/devstreaming.apple.com\/videos\/wwdc\/\d+\/\w+\/\d+\/)(\w+)\.mp4\?dl=1/;
+var videoURLRegex = /(https:\/\/devstreaming-cdn.apple.com\/videos\/wwdc\/\d+\/\w+\/\d+\/)(\w+)\.mp4\?dl=1/;
 async.waterfall([
     //read links file
     function(callback) {
